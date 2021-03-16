@@ -3,6 +3,7 @@ import torchvision
 import torchvision.datasets as datasets
 from torchvision import transforms
 from torch import nn
+import math
 
 class Identity(nn.Module):
     def __init__(self):
@@ -54,11 +55,17 @@ else:
 #input_batch = mnist_train.unsqueeze(0)
 print("Begin eval")
 
+data_train_size = len(mnist_train)
+data_test_size = len(mnist_test)
+batch_size = 16
+total_batches = math.ceil(data_train_size / batch_size)
 batch_counter = 0
-trainloader = torch.utils.data.DataLoader(mnist_train, batch_size=64, shuffle=False)
+
+trainloader = torch.utils.data.DataLoader(mnist_train, batch_size=batch_size, shuffle=False)
+
 for data, target in trainloader:
-    if batch_counter % 500 == 0:
-        print(f'Started with input batch {batch_counter + 1}')
+    if batch_counter % math.floor(total_batches / 100) == 0:
+        print(f'Started with input batch {batch_counter + 1} of {total_batches}')
     input_batch = data
     #input_batch = data[1][0].unsqueeze(0)
     input_batch = input_batch.to(device=device)
@@ -76,4 +83,6 @@ print("Eval done")
 
 #print(output[0])
 #probabilities = torch.nn.functional.softmax(output[0], dim=0)
-#print(probabilities)
+print(probabilities)
+
+breakpoint()
