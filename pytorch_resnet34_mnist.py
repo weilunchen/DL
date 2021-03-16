@@ -55,10 +55,12 @@ else:
 print("Begin eval")
 
 batch_counter = 0
-for x in enumerate (mnist_train):
+trainloader = torch.utils.data.DataLoader(mnist_train, batch_size=64, shuffle=False)
+for data, target in trainloader:
     if batch_counter % 500 == 0:
         print(f'Started with input batch {batch_counter + 1}')
-    input_batch = x[1][0].unsqueeze(0)
+    input_batch = data
+    #input_batch = data[1][0].unsqueeze(0)
     input_batch = input_batch.to(device=device)
     output = model(input_batch)
     probabilities = torch.nn.functional.softmax(output[0], dim=0)
