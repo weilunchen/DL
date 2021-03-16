@@ -2,6 +2,14 @@ import torch
 import torchvision
 import torchvision.datasets as datasets
 from torchvision import transforms
+from torch import nn
+
+class Identity(nn.Module):
+    def __init__(self):
+        super(Identity, self).__init__()
+
+    def forward(self, x):
+        return x
 
 #Torch version 1.8.0
 #Torchvision version 0.9.0
@@ -10,6 +18,8 @@ from torchvision import transforms
 #model = torch.hub.load('pytorch/vision:v0.9.0', 'resnet34', pretrained=True)
 model = torchvision.models.resnet34(pretrained=False)
 model.load_state_dict(torch.load('resnet34-333f7ec4.pth'))
+#model.avgpool = Identity()
+model.fc = nn.Linear(512, 10)
 model.eval()
 
 #Transform the images usable for ResNet34
