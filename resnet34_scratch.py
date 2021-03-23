@@ -2,15 +2,15 @@ import torch
 import torch.nn
 import torchvision.transforms.functional.nn as TF
 
-class ResNetBlock(nn.Module):
+class ResNetUnit(nn.Module):
 	def __init__(self, in_channels, out_channels, stride=1):
-		super(ResNetBlock, self).__init__()
+		super(ResNetUnit, self).__init__()
 		self.conv = nn.Sequential(
 			nn.Conv2d(in_channels, out_channels, 3, stride=stride, padding=1),
 			nn.BatchNorm2d(out_channels),
 			nn.ReLU(inplace=True),
 			nn.Conv2d(out_channels, out_channels, 3, stride=1, padding=1),
-			nn.BatchNorm2d(out_channgels),
+			nn.BatchNorm2d(out_channels),
 			nn.ReLU(inplace=True)
 		)
 
@@ -52,17 +52,17 @@ class ResNet34(nn.Module):
 
 		# First block list (64)
 		res_block = nn.ModuleList()
-		res_block.append(ResNetBlock(channel_size, channel_size))
-		res_block.append(ResNetBlock(channel_size, channel_size))
-		res_block.append(ResNetBlock(channel_size, channel_size))
+		res_block.append(ResNetUnit(channel_size, channel_size))
+		res_block.append(ResNetUnit(channel_size, channel_size))
+		res_block.append(ResNetUnit(channel_size, channel_size))
 		self.res_blocks.append(res_block)
 
 		# Second block list (128)
 		res_block = nn.ModuleList()
-		res_block.append(ResNetBlock(channel_size, double_channel_size, stride=2))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(channel_size, double_channel_size, stride=2))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		self.res_blocks.append(res_block)
 
 		channel_size = double_channel_size
@@ -70,12 +70,12 @@ class ResNet34(nn.Module):
 
 		# Third block list (256)
 		res_block = nn.ModuleList()
-		res_block.append(ResNetBlock(channel_size, double_channel_size, stride=2))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(channel_size, double_channel_size, stride=2))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		self.res_blocks.append(res_block)
 
 		channel_size = double_channel_size
@@ -83,9 +83,9 @@ class ResNet34(nn.Module):
 
 		# Fourth block list (512)
 		res_block = nn.ModuleList()
-		res_block.append(ResNetBlock(channel_size, double_channel_size, stride=2))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(channel_size, double_channel_size, stride=2))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		self.res_blocks.append(res_block)
 
 		# End block (1000)
@@ -93,7 +93,25 @@ class ResNet34(nn.Module):
 		self.end_block = nn.Linear(double_channel_size, 1000)
 
 	def forward(self, x):
-		pass
+		x = self.start_block(x)
+
+		for block_index, res_block in enumerate(self.res_blocks):
+			for unit_index, res_unit in enumerate(res_block):
+				downsampling_needed = block_index > 0 && unit_index == 0
+				
+				if downsampling_needed:
+					in_channels = x.shape[2]
+					out_channels = in_channels * 2
+					identity = nn.Conv2d(in_channels, out_channels, 3, stride = 2, padding = 1)
+				else
+					identity = x
+
+				x = res_block(x)
+				x += identity
+				x = nn.ReLU(x, inplace=True)
+
+		return self.end_block(x)
+
 
 class UNet(nn.Module):
 	def __init__(self, in_channels=3, out_channels=1):
@@ -113,17 +131,17 @@ class UNet(nn.Module):
 
 		# First block list (64)
 		res_block = nn.ModuleList()
-		res_block.append(ResNetBlock(channel_size, channel_size))
-		res_block.append(ResNetBlock(channel_size, channel_size))
-		res_block.append(ResNetBlock(channel_size, channel_size))
+		res_block.append(ResNetUnit(channel_size, channel_size))
+		res_block.append(ResNetUnit(channel_size, channel_size))
+		res_block.append(ResNetUnit(channel_size, channel_size))
 		self.res_blocks.append(res_block)
 
 		# Second block list (128)
 		res_block = nn.ModuleList()
-		res_block.append(ResNetBlock(channel_size, double_channel_size, stride=2))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(channel_size, double_channel_size, stride=2))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		self.res_blocks.append(res_block)
 
 		channel_size = double_channel_size
@@ -131,12 +149,12 @@ class UNet(nn.Module):
 
 		# Third block list (256)
 		res_block = nn.ModuleList()
-		res_block.append(ResNetBlock(channel_size, double_channel_size, stride=2))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(channel_size, double_channel_size, stride=2))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		self.res_blocks.append(res_block)
 
 		channel_size = double_channel_size
@@ -144,9 +162,9 @@ class UNet(nn.Module):
 
 		# Fourth block list (512)
 		res_block = nn.ModuleList()
-		res_block.append(ResNetBlock(channel_size, double_channel_size, stride=2))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
-		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(channel_size, double_channel_size, stride=2))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
+		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		self.res_blocks.append(res_block)
 
 		self.bottom = nn.Conv2d(double_channel_size, double_channel_size).append(
@@ -162,12 +180,27 @@ class UNet(nn.Module):
 
 
 	def forward(self, x):
+		# UNet skip connections
 		skip_connections = []
 
-		for res_block in self.res_blocks:
-			x = res_block(x)
+		x = self.start_block(x)
+
+		for block_index, res_block in enumerate(self.res_blocks):
+			for unit_index, res_unit in enumerate(res_block):
+				downsampling_needed = block_index > 0 && unit_index == 0
+
+				if downsampling_needed:
+					in_channels = x.shape[2]
+					out_channels = in_channels * 2
+					identity = nn.Conv2d(in_channels, out_channels, 3, stride = 2, padding = 1)
+				else
+					identity = x
+
+				x = res_block(x)
+				x += identity
+				x = nn.ReLU(x, inplace=true)
+
 			skip_connections.append(x)
-			x = self.pool(x)
 
 		x = self.bottom(x)
 		skip_connections = skip_connections[::-1]
