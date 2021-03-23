@@ -7,14 +7,33 @@ class ResNetBlock(nn.Module):
 		super(ResNetBlock, self).__init__()
 		self.conv = nn.Sequential(
 			nn.Conv2d(in_channels, out_channels, 3, stride=stride, padding=1),
-			nn.ReLU(),
+			nn.BatchNorm2d(out_channels),
+			nn.ReLU(inplace=True),
 			nn.Conv2d(out_channels, out_channels, 3, stride=1, padding=1),
-			nn.ReLU()
+			nn.BatchNorm2d(out_channgels),
+			nn.ReLU(inplace=True)
 		)
 
 	def forward(x):
 		return self.conv(x)
 
+class UpSampleBlock(nn.Module):
+	def __init__(self, in_channels=256, out_channels=128, reduction=2):
+		super(UpSampleBlock, self).__init__()
+		self.conv = nn.Sequential(
+			nn.ReLU(inplace=True),
+			nn.BatchNorm2d(in_channels),
+			#Concurrent Spatial, Channel Squeeze and Excitation layer
+			nn.Linear(in_channels, in_channels // reduction),
+			nn.ReLU(inplace=True),
+			nn.Linear(in_channels // reduction, in_channels),
+			nn.Sigmoid(),
+			#Transpose Conv with kernel of 2x2 and stride of 2
+			nn.ConvTranspose2d(in_channels, out_channels, kernel_size=(2, 2), stride=2, bias=False)
+		)
+	
+	def forward(self, x):
+		return self.conv(x)
 
 class ResNet34(nn.Module):
 	def __init__(self, in_channels=3, out_channels=1000):
@@ -75,3 +94,88 @@ class ResNet34(nn.Module):
 
 	def forward(self, x):
 		pass
+
+class UNet(nn.Module):
+	def __init__(self, in_channels=3, out_channels=1):
+		super(UNet, self).__init__()
+
+		self.start_block = nn.ModuleList()
+		self.res_blocks = nn.ModuleList()
+		self.ups = nn.ModuleList()
+
+		channel_size = 64
+		double_channel_size = channel_size * 2
+
+		# Start block (64)
+		self.start_block.append(nn.Conv2d(in_channels, channel_size, 3, kernel_size=(7, 7), stride=2, padding=1))
+		self.start_block.append(nn.BatchNorm2d(64, eps=1e-05, momemtum=0.1, affine=True, track_running_stats=True))
+		self.start_block.append(nn.MaxPool2d(kernel_size=2, stride=2))
+
+		# First block list (64)
+		res_block = nn.ModuleList()
+		res_block.append(ResNetBlock(channel_size, channel_size))
+		res_block.append(ResNetBlock(channel_size, channel_size))
+		res_block.append(ResNetBlock(channel_size, channel_size))
+		self.res_blocks.append(res_block)
+
+		# Second block list (128)
+		res_block = nn.ModuleList()
+		res_block.append(ResNetBlock(channel_size, double_channel_size, stride=2))
+		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
+		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
+		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
+		self.res_blocks.append(res_block)
+
+		channel_size = double_channel_size
+		double_channel_size = channel_size * 2
+
+		# Third block list (256)
+		res_block = nn.ModuleList()
+		res_block.append(ResNetBlock(channel_size, double_channel_size, stride=2))
+		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
+		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
+		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
+		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
+		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
+		self.res_blocks.append(res_block)
+
+		channel_size = double_channel_size
+		double_channel_size = channel_size * 2
+
+		# Fourth block list (512)
+		res_block = nn.ModuleList()
+		res_block.append(ResNetBlock(channel_size, double_channel_size, stride=2))
+		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
+		res_block.append(ResNetBlock(double_channel_size, double_channel_size))
+		self.res_blocks.append(res_block)
+
+		self.bottom = nn.Conv2d(double_channel_size, double_channel_size).append(
+			nn.ConvTranspose2d(double_channel_size, 128, kernel_size=(2, 2), stride=2, bias=False)
+			)
+
+		# Right part of the UNet (the up part)
+		for res_block in self.res_blocks:
+			self.ups.append(nn.Conv2d(res_block.out_channels, 128))
+			self.ups.append(UpSampleBlock(in_channels, out_channels))
+
+		self.final_conv = UpSampleBlock(in_channels, out_channels=1)
+
+
+	def forward(self, x):
+		skip_connections = []
+
+		for res_block in self.res_blocks:
+			x = res_block(x)
+			skip_connections.append(x)
+			x = self.pool(x)
+
+		x = self.bottom(x)
+		skip_connections = skip_connections[::-1]
+
+		for i in range(0, len(self.ups), 2):
+			x = self.ups[i](x)
+			skip_connection = skip_connections[i//2]
+			concat_skip_connection = torch.cat((skip_connection, x), dim=1)
+			x = self.ups[i+1](concat_skip_connection) 
+
+		return self.final_conv(x)
