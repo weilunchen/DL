@@ -14,7 +14,7 @@ class ResNetUnit(nn.Module):
 			nn.ReLU(inplace=True)
 		)
 
-	def forward(x):
+	def forward(self, x):
 		return self.conv(x)
 
 class UpSampleBlock(nn.Module):
@@ -89,8 +89,8 @@ class ResNet34(nn.Module):
 		self.res_blocks.append(res_block)
 
 		# End block (1000)
-		self.start_block.append(nn.AvgPool2d(kernel_size=1, stride=1))
-		self.end_block = nn.Linear(double_channel_size, 1000)
+		self.end_block.append(nn.AvgPool2d(kernel_size=1, stride=1))
+		self.end_block.append(nn.Linear(double_channel_size, 1000))
 
 	def forward(self, x):
 		x = self.start_block(x)
@@ -102,7 +102,7 @@ class ResNet34(nn.Module):
 				if downsampling_needed:
 					in_channels = x.shape[2]
 					out_channels = in_channels * 2
-					identity = nn.Conv2d(in_channels, out_channels, 3, stride = 2, padding = 1)
+					identity = nn.Conv2d(in_channels, out_channels, 1, stride = 2)
 				else
 					identity = x
 
