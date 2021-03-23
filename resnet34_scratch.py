@@ -103,7 +103,7 @@ class ResNet34(nn.Module):
 					in_channels = x.shape[2]
 					out_channels = in_channels * 2
 					identity = nn.Conv2d(in_channels, out_channels, 1, stride = 2)
-				else
+				else:
 					identity = x
 
 				x = res_block(x)
@@ -114,7 +114,7 @@ class ResNet34(nn.Module):
 
 
 class UNet(nn.Module):
-	def __init__(self, in_channels=3, out_channels=1):
+	def __init__(self, in_channels, out_channels):
 		super(UNet, self).__init__()
 
 		self.start_block = nn.ModuleList()
@@ -125,9 +125,16 @@ class UNet(nn.Module):
 		double_channel_size = channel_size * 2
 
 		# Start block (64)
-		self.start_block.append(nn.Conv2d(in_channels, channel_size, kernel_size=(7, 7), stride=2, padding=1))
-		self.start_block.append(nn.BatchNorm2d(64, eps=1e-05, affine=True, track_running_stats=True))
-		self.start_block.append(nn.MaxPool2d(kernel_size=2, stride=2))
+		self.start_block = nn.Sequential(
+			nn.Conv2d(in_channels, channel_size, kernel_size=(7, 7), stride=2, padding=3),
+			nn.BatchNorm2d(64, eps=1e-05, affine=True, track_running_stats=True),
+			nn.MaxPool2d(kernel_size=2, stride=2)
+		)
+		#self.start_block.append(nn.Conv2d(in_channels, channel_size, kernel_size=(7, 7), stride=2, padding=1))
+		#self.start_block.append(nn.BatchNorm2d(64, eps=1e-05, affine=True, track_running_stats=True))
+		#self.start_block.append(nn.MaxPool2d(kernel_size=2, stride=2))
+		self.ups.append(nn.Conv2d(in_channels, 128, kernel_size=(1, 1)))
+		self.ups.append(UpSampleBlock(in_channels, 128))
 
 		# First block list (64)
 		res_block = nn.ModuleList()
@@ -135,6 +142,8 @@ class UNet(nn.Module):
 		res_block.append(ResNetUnit(channel_size, channel_size))
 		res_block.append(ResNetUnit(channel_size, channel_size))
 		self.res_blocks.append(res_block)
+		self.ups.append(nn.Conv2d(channel_size, 128, kernel_size=(1, 1)))
+		self.ups.append(UpSampleBlock(channel_size, 128))
 
 		# Second block list (128)
 		res_block = nn.ModuleList()
@@ -143,6 +152,8 @@ class UNet(nn.Module):
 		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		self.res_blocks.append(res_block)
+		self.ups.append(nn.Conv2d(double_channel_size, 128, kernel_size=(1, 1)))
+		self.ups.append(UpSampleBlock(double_channel_size, 128))
 
 		channel_size = double_channel_size
 		double_channel_size = channel_size * 2
@@ -156,6 +167,8 @@ class UNet(nn.Module):
 		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		self.res_blocks.append(res_block)
+		self.ups.append(nn.Conv2d(double_channel_size, 128, kernel_size=(1, 1)))
+		self.ups.append(UpSampleBlock(double_channel_size, 128))
 
 		channel_size = double_channel_size
 		double_channel_size = channel_size * 2
@@ -173,9 +186,9 @@ class UNet(nn.Module):
 		self.bottom = bottom_block
 
 		# Right part of the UNet (the up part)
-		for res_block in self.res_blocks:
-			self.ups.append(nn.Conv2d(in_channels, 128, kernel_size=(1, 1)))
-			self.ups.append(UpSampleBlock(in_channels, out_channels))
+		#for res_block in self.res_blocks:
+		#	self.ups.append(nn.Conv2d(in_channels, 128, kernel_size=(1, 1)))
+		#	self.ups.append(UpSampleBlock(in_channels, out_channels))
 
 		self.final_conv = UpSampleBlock(in_channels, out_channels=1)
 
@@ -193,13 +206,13 @@ class UNet(nn.Module):
 				if downsampling_needed:
 					in_channels = x.shape[2]
 					out_channels = in_channels * 2
-					identity = nn.Conv2d(in_channels, out_channels, 3, stride = 2, padding = 1)
+					identity = nn.Conv2d(in_channels, out_channels, 1, stride = 2, padding = 1)(x)
 				else:
 					identity = x
 
-				x = res_block(x)
+				x = res_unit(x)
 				x += identity
-				x = nn.ReLU(x, inplace=true)
+				x = nn.ReLU(inplace=True)(x)
 
 			skip_connections.append(x)
 
@@ -215,7 +228,7 @@ class UNet(nn.Module):
 		return self.final_conv(x)
 	
 def test():
-	x = torch.randn((3, 2, 160, 160))
+	x = torch.randn((3, 1, 320, 320))
 	model = UNet(in_channels=2, out_channels=1)
 	preds = model(x)
 	print(preds.shap)
