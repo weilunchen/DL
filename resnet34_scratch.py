@@ -133,8 +133,8 @@ class UNet(nn.Module):
 		#self.start_block.append(nn.Conv2d(in_channels, channel_size, kernel_size=(7, 7), stride=2, padding=1))
 		#self.start_block.append(nn.BatchNorm2d(64, eps=1e-05, affine=True, track_running_stats=True))
 		#self.start_block.append(nn.MaxPool2d(kernel_size=2, stride=2))
-		self.ups.append(nn.Conv2d(in_channels, 128, kernel_size=(1, 1)))
-		self.ups.append(UpSampleBlock(in_channels, 128))
+		self.ups.append(nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1))
+		self.ups.append(UpSampleBlock(256, 128))
 
 		# First block list (64)
 		res_block = nn.ModuleList()
@@ -142,8 +142,8 @@ class UNet(nn.Module):
 		res_block.append(ResNetUnit(channel_size, channel_size))
 		res_block.append(ResNetUnit(channel_size, channel_size))
 		self.res_blocks.append(res_block)
-		self.ups.append(nn.Conv2d(channel_size, 128, kernel_size=(1, 1)))
-		self.ups.append(UpSampleBlock(channel_size, 128))
+		self.ups.append(nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1))
+		self.ups.append(UpSampleBlock(256, 128))
 
 		# Second block list (128)
 		res_block = nn.ModuleList()
@@ -152,8 +152,8 @@ class UNet(nn.Module):
 		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		self.res_blocks.append(res_block)
-		self.ups.append(nn.Conv2d(double_channel_size, 128, kernel_size=(1, 1)))
-		self.ups.append(UpSampleBlock(double_channel_size, 128))
+		self.ups.append(nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1))
+		self.ups.append(UpSampleBlock(256, 128))
 
 		channel_size = double_channel_size
 		double_channel_size = channel_size * 2
@@ -167,8 +167,8 @@ class UNet(nn.Module):
 		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		self.res_blocks.append(res_block)
-		self.ups.append(nn.Conv2d(double_channel_size, 128, kernel_size=(1, 1)))
-		self.ups.append(UpSampleBlock(double_channel_size, 128))
+		self.ups.append(nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1))
+		self.ups.append(UpSampleBlock(256, 128))
 
 		channel_size = double_channel_size
 		double_channel_size = channel_size * 2
@@ -214,9 +214,15 @@ class UNet(nn.Module):
 				x += identity
 				x = nn.ReLU(inplace=True)(x)
 
-			skip_connections.append(x)
+			skip_in_channels = x.shape[1]
+			skip_out_channels = 128
+			skip_connection = nn.Conv2d(skip_in_channels, skip_out_channels, 1, stride = 1)
+			skip_connections.append(skip_connection)
 
+		breakpoint()
 		x = self.bottom(x)
+		breakpoint()
+
 		skip_connections = skip_connections[::-1]
 
 		for i in range(0, len(self.ups), 2):
