@@ -49,6 +49,17 @@ class UpSampleUnit(nn.Module):
 	def forward(self, x):
 		return self.conv(x)
 
+class BottomUnit(nn.Module):
+	def __init__(self, in_channels, out_channels):
+		super(BottomUnit, self).__init__()
+		self.conv = nn.Sequential(
+			nn.Conv2d(in_channels, out_channels, kernel_size=(1, 1)),
+			nn.ConvTranspose2d(out_channels, 128, kernel_size=(2, 2), stride=2, bias=False),
+		)
+
+	def forward(self, x):
+		return self.conv(x)
+
 class UNet(nn.Module):
 	def __init__(self, in_channels=3, out_channels=1):
 		super(UNet, self).__init__()
@@ -106,10 +117,10 @@ class UNet(nn.Module):
 		self.downs.append(nn.Sequential(*res_block))
 		
 		#Bottom connection
-		bottom_block = []
-		bottom_block.append(nn.Conv2d(double_channel_size, double_channel_size, kernel_size=(1, 1)))
-		bottom_block.append(nn.ConvTranspose2d(double_channel_size, 128, kernel_size=(2, 2), stride=2, bias=False))
-		self.bottom_block = nn.Sequential(*bottom_block)
+		#bottom_block = []
+		#bottom_block.append(nn.Conv2d(double_channel_size, double_channel_size, kernel_size=(1, 1)))
+		#bottom_block.append(nn.ConvTranspose2d(double_channel_size, 128, kernel_size=(2, 2), stride=2, bias=False))
+		self.bottom_block = BottomUnit(double_channel_size, double_channel_size)
 		
 		for i in range(0, 3):
 			self.ups.append(UpSampleUnit(256, 128))
