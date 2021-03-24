@@ -2,6 +2,18 @@ import torch
 import torch.nn as nn
 import torchvision.transforms.functional as TF
 
+class ResNetStart(nn.Module):
+	def __init__(self, in_channels, out_channels, stride=2):
+		super(ResNetStart, self).__init__()
+		self.conv = nn.Sequential(
+			nn.Conv2d(in_channels, out_channels, kernel_size=(7, 7), stride=stride, padding = 3),
+			nn.BatchNorm2d(out_channels),
+			nn.ReLU(inplace=True),
+		)
+	
+	def forward(self, x):
+		return self.conv(x)
+
 class ResNetUnit(nn.Module):
 	def __init__(self, in_channels, out_channels, stride=1):
 		super(ResNetUnit, self).__init__()
@@ -114,7 +126,7 @@ class ResNet34(nn.Module):
 
 
 class UNet(nn.Module):
-	def __init__(self, in_channels, out_channels):
+	def __init__(self, in_channels=3, out_channels=1):
 		super(UNet, self).__init__()
 
 		# self.start_block = nn.ModuleList()
@@ -125,11 +137,13 @@ class UNet(nn.Module):
 		double_channel_size = channel_size * 2
 
 		# Start block (64)
-		self.start_block = nn.Sequential(
-			nn.Conv2d(in_channels, channel_size, kernel_size=(7, 7), stride=2, padding=3),
-			nn.BatchNorm2d(64, eps=1e-05, affine=True, track_running_stats=True),
+		self.start_block = ResNetStart(in_channels, channel_size)
+		#self.start_block = nn.Sequential(
+			#nn.Conv2d(in_channels, channel_size, kernel_size=(7, 7), stride=2, padding=3),
+			#nn.BatchNorm2d(channel_size),
+			#nn.ReLU(inplace=True),
 			# nn.MaxPool2d(kernel_size=2, stride=2)
-		)
+		#)
 		#self.start_block.append(nn.Conv2d(in_channels, channel_size, kernel_size=(7, 7), stride=2, padding=1))
 		#self.start_block.append(nn.BatchNorm2d(64, eps=1e-05, affine=True, track_running_stats=True))
 		#self.start_block.append(nn.MaxPool2d(kernel_size=2, stride=2))
@@ -234,8 +248,8 @@ class UNet(nn.Module):
 		return self.final_conv(x)
 	
 def test():
-	x = torch.randn((3, 2, 320, 320))
-	model = UNet(in_channels=2, out_channels=1)
+	x = torch.randn((3, 1, 320, 320))
+	model = UNet(in_channels=3, out_channels=1)
 	preds = model(x)
 	print(preds.shap)
 	print(x.shape)
