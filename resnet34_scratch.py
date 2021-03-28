@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torchvision.transforms.functional as TF
+import numpy as np
 
 class ResNetStart(nn.Module):
 	def __init__(self, in_channels, out_channels, stride=2):
@@ -29,23 +30,59 @@ class ResNetUnit(nn.Module):
 	def forward(self, x):
 		return self.conv(x)
 
-class UpSampleBlock(nn.Module):
-	def __init__(self, in_channels=256, out_channels=128, reduction=2):
-		super(UpSampleBlock, self).__init__()
-		self.conv = nn.Sequential(
-			nn.ReLU(inplace=True),
-			nn.BatchNorm2d(in_channels),
-			#Concurrent Spatial, Channel Squeeze and Excitation layer
-			nn.Linear(in_channels, in_channels // reduction),
-			nn.ReLU(inplace=True),
-			nn.Linear(in_channels // reduction, in_channels),
-			nn.Sigmoid(),
-			#Transpose Conv with kernel of 2x2 and stride of 2
-			nn.ConvTranspose2d(in_channels, out_channels, kernel_size=(2, 2), stride=2, bias=False)
-		)
-	
+class View(nn.Module):
+	def __init__(self, shape):
+		super(View, self).__init__()
+
+		self.shape = shape
+
 	def forward(self, x):
-		return self.conv(x)
+		return x.view(self.shape)
+
+
+class UpSampleBlock(nn.Module):
+	def __init__(self, in_channels, out_channels, reduction=2):
+		super(UpSampleBlock, self).__init__()
+
+		self.in_channels = in_channels
+		self.out_channels = out_channels
+		self.reduction = reduction
+
+	def forward(self, x):
+		x = nn.ReLU(inplace=True)(x)
+		x = nn.BatchNorm2d(self.in_channels)(x)
+
+		#Concurrent Spatial, Channel Squeeze and Excitation layer
+		x_before_squeeze = x
+
+		original_height = x.shape[2]
+		original_width = x.shape[3]
+		
+		# Global average pool
+		x = nn.AvgPool2d(kernel_size=(original_height, original_height))(x)
+
+		tensor_shape = x.shape
+		n = tensor_shape[0]
+		channel_size = tensor_shape[1]
+		# Height and width should be 1 after global average pool
+
+		linear_in_channels = np.product(channel_size)
+		linear_shape = [n, linear_in_channels]
+
+		x = View(linear_shape)(x)
+		x = nn.Linear(linear_in_channels, linear_in_channels // self.reduction)(x)
+		x = nn.ReLU(inplace=True)(x)
+		x = nn.Linear(linear_in_channels // self.reduction, linear_in_channels)(x)
+		x = nn.Sigmoid()(x)
+		x = View(tensor_shape)(x)
+
+		x = x_before_squeeze * x
+
+		# After squeeze, transpose Conv with kernel of 2x2 and stride of 2
+		x = nn.ConvTranspose2d(self.in_channels, self.out_channels, kernel_size=(2, 2), stride=2, bias=False)(x)
+
+		return x
+	
 
 class ResNet34(nn.Module):
 	def __init__(self, in_channels=3, out_channels=1000):
@@ -138,17 +175,6 @@ class UNet(nn.Module):
 
 		# Start block (64)
 		self.start_block = ResNetStart(in_channels, channel_size)
-		#self.start_block = nn.Sequential(
-			#nn.Conv2d(in_channels, channel_size, kernel_size=(7, 7), stride=2, padding=3),
-			#nn.BatchNorm2d(channel_size),
-			#nn.ReLU(inplace=True),
-			# nn.MaxPool2d(kernel_size=2, stride=2)
-		#)
-		#self.start_block.append(nn.Conv2d(in_channels, channel_size, kernel_size=(7, 7), stride=2, padding=1))
-		#self.start_block.append(nn.BatchNorm2d(64, eps=1e-05, affine=True, track_running_stats=True))
-		#self.start_block.append(nn.MaxPool2d(kernel_size=2, stride=2))
-		self.ups.append(nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1))
-		self.ups.append(UpSampleBlock(256, 128))
 
 		# First block list (64)
 		res_block = nn.ModuleList()
@@ -156,8 +182,6 @@ class UNet(nn.Module):
 		res_block.append(ResNetUnit(channel_size, channel_size))
 		res_block.append(ResNetUnit(channel_size, channel_size))
 		self.res_blocks.append(res_block)
-		self.ups.append(nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1))
-		self.ups.append(UpSampleBlock(256, 128))
 
 		# Second block list (128)
 		res_block = nn.ModuleList()
@@ -166,8 +190,6 @@ class UNet(nn.Module):
 		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		self.res_blocks.append(res_block)
-		self.ups.append(nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1))
-		self.ups.append(UpSampleBlock(256, 128))
 
 		channel_size = double_channel_size
 		double_channel_size = channel_size * 2
@@ -181,8 +203,6 @@ class UNet(nn.Module):
 		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		self.res_blocks.append(res_block)
-		self.ups.append(nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1))
-		self.ups.append(UpSampleBlock(256, 128))
 
 		channel_size = double_channel_size
 		double_channel_size = channel_size * 2
@@ -194,17 +214,24 @@ class UNet(nn.Module):
 		res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 		self.res_blocks.append(res_block)
 
-		bottom_block = []
-		bottom_block.append(nn.Conv2d(double_channel_size, double_channel_size, kernel_size=(1, 1)))
-		bottom_block.append(nn.ConvTranspose2d(double_channel_size, 128, kernel_size=(2, 2), stride=2, bias=False))
-		self.bottom = nn.Sequential(*bottom_block)
+		# Fourth level (This is bottom now)
+		self.ups.append(UpSampleBlock(double_channel_size, 128))
+		self.ups.append(nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1))
 
-		# Right part of the UNet (the up part)
-		#for res_block in self.res_blocks:
-		#	self.ups.append(nn.Conv2d(in_channels, 128, kernel_size=(1, 1)))
-		#	self.ups.append(UpSampleBlock(in_channels, out_channels))
+		# Third level
+		self.ups.append(UpSampleBlock(256, 128))
+		self.ups.append(nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1))
 
-		self.final_conv = UpSampleBlock(in_channels, out_channels=1)
+		# Second level
+		self.ups.append(UpSampleBlock(256, 128))
+		self.ups.append(nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1))
+
+		# First level
+		self.ups.append(UpSampleBlock(256, 128))
+		self.ups.append(nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1))
+
+		# Final convolution to obtain output
+		self.final_conv = UpSampleBlock(256, 1)
 
 
 	def forward(self, x):
@@ -214,6 +241,14 @@ class UNet(nn.Module):
 		x = self.start_block(x)
 
 		for block_index, res_block in enumerate(self.res_blocks):
+			skip_in_channels = x.shape[1]
+			skip_out_channels = 128
+			skip_connection = nn.Conv2d(skip_in_channels, skip_out_channels, 1, stride = 1)(x)
+			skip_connections.append(skip_connection)
+
+			if block_index == 0:
+				x = nn.MaxPool2d(kernel_size=2, stride=2)(x)
+
 			for unit_index, res_unit in enumerate(res_block):
 				downsampling_needed = block_index > 0 and unit_index == 0
 
@@ -228,30 +263,33 @@ class UNet(nn.Module):
 				x += identity
 				x = nn.ReLU(inplace=True)(x)
 
-			skip_in_channels = x.shape[1]
-			skip_out_channels = 128
-			skip_connection = nn.Conv2d(skip_in_channels, skip_out_channels, 1, stride = 1)
-			skip_connections.append(skip_connection)
-
-		breakpoint()
-		x = self.bottom(x)
-		breakpoint()
+		# Mid edge at the bottom of UNet
+		x = nn.Conv2d(512, 512, 1, stride = 1)(x)
 
 		skip_connections = skip_connections[::-1]
 
 		for i in range(0, len(self.ups), 2):
-			x = self.ups[i](x)
 			skip_connection = skip_connections[i//2]
-			concat_skip_connection = torch.cat((skip_connection, x), dim=1)
+			x_skip = skip_connection
+			x = self.ups[i](x)
+			
+			concat_skip_connection = torch.cat((x_skip, x), dim=1)
 			x = self.ups[i+1](concat_skip_connection) 
 
-		return self.final_conv(x)
+		x = self.final_conv(x)
+
+		return x
 	
 def test():
-	x = torch.randn((3, 1, 320, 320))
-	model = UNet(in_channels=3, out_channels=1)
+	n = 3
+	in_channels = 3
+	height = 320
+	width = 320
+
+	x = torch.randn((n, in_channels, height, width))
+	model = UNet(in_channels=in_channels, out_channels=1)
 	preds = model(x)
-	print(preds.shap)
+	print(preds.shape)
 	print(x.shape)
 
 if __name__ == "__main__":
