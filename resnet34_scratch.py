@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
 import torchvision.transforms.functional as TF
+import torch.optim as optim
+from torch.optim import lr_scheduler
+from torch.autograd import Variable
 import numpy as np
 
 class ResNetStart(nn.Module):
@@ -52,7 +55,7 @@ class UpSampleBlock(nn.Module):
 		x = nn.ReLU(inplace=True)(x)
 		x = nn.BatchNorm2d(self.in_channels)(x)
 
-		#Concurrent Spatial, Channel Squeeze and Excitation layer
+		#Concurrent Spatial, Channel Squeeze and Excitation layer (scSE)
 		x_before_squeeze = x
 
 		original_height = x.shape[2]
@@ -69,6 +72,7 @@ class UpSampleBlock(nn.Module):
 		linear_in_channels = np.product(channel_size)
 		linear_shape = [n, linear_in_channels]
 
+		# Spatial Squeeze and Channel Excitation (cSE)
 		x = View(linear_shape)(x)
 		x = nn.Linear(linear_in_channels, linear_in_channels // self.reduction)(x)
 		x = nn.ReLU(inplace=True)(x)
@@ -76,7 +80,19 @@ class UpSampleBlock(nn.Module):
 		x = nn.Sigmoid()(x)
 		x = View(tensor_shape)(x)
 
-		x = x_before_squeeze * x
+		x_cSE = x_before_squeeze * x
+
+		# Channel Squeeze and Spatial Excitation (sSE)
+		x = x_before_squeeze
+
+		x = nn.Conv1d(self.in_channels, 1, kernel_size=(1, 1))(x)
+		x = nn.Sigmoid()(x)
+
+		x_sSE = x_before_squeeze * x
+
+		# Combining cSE and sSE
+
+		x = x_sSE + x_cSE
 
 		# After squeeze, transpose Conv with kernel of 2x2 and stride of 2
 		x = nn.ConvTranspose2d(self.in_channels, self.out_channels, kernel_size=(2, 2), stride=2, bias=False)(x)
@@ -292,5 +308,99 @@ def test():
 	print(preds.shape)
 	print(x.shape)
 
+def train(model, data, epochs, criterion, optimizer, schedular):
+	best_model = model.state_dict()
+	max_acc = 0.0
+	train_loader, test_loader = data
+
+	for epoch in range(epochs):
+		epoch_loss = 0.0
+		epoch_acc = 0.0
+
+		print("Epoch: " + str(epoch))
+
+		count = 0
+		for data, target in train_loader:
+			model.train(True)
+
+			print(count)
+
+			input = Variable(data.type(torch.FloatTensor))
+			target = Variable(target.type(torch.LongTensor))
+
+			optimizer.zero_grad()
+
+			if torch.cuda.is_available():
+				input = input.cuda()
+				target = target.cuda()
+			
+			output = model(input)
+			_, preds = torch.max(output.data, 1)
+			loss = criterion(output, target)
+
+			loss.backward()
+			optimizer.step()
+			count += 1
+		
+		count = 0
+		run_loss = 0.0
+		run_corrects = 0
+		for data, target in test_loader:
+			print("Test: " + str(count))
+
+			model.train(False)
+
+			input = Variable(data.type(torch.FloatTensor))
+			target = Variable(target.type(torch.LongTensor))
+
+			if torch.cuda.is_available():
+				input = input.cuda()
+				target = target.cuda()
+			
+			output = model(input)
+			_, preds = torch.max(output.data, 1)
+			loss = criterion(output, target)
+
+			run_loss += loss.item()
+			run_corrects += torch.sum(preds == target.data)
+			count += 1
+		
+		epoch_loss = run_loss / len(test_loader)
+		epoch_acc = run_corrects.true_divide(len(test_loader))
+
+		if epoch_acc > max_acc:
+			print("Best accuracy: " + str(epoch_acc))
+			max_acc = epoch_acc
+			best_model = model.state_dict()
+	
+	print("Eval Done")
+	return best_model
+
+class diceCoefficientLoss(nn.Module):
+	def __init__(self):
+		super(diceCoefficientLoss, self).__init__()
+	def forward(self, pred, target):
+		pred_flat = pred.contiguous().view(-1)
+		targ_flat = target.contiguous().view(-1)
+		intersection = (pred_flat * targ_flat).sum()
+		pred_sum = torch.sum(pred_flat * pred_flat)
+		targ_sum = torch.sum(targ_flat * targ_flat)
+		return 1 - ((2. * intersection) / (pred_sum + targ_sum))
+
+class AdamW(optim.optimizer):
+	def __init__(self, params):
+		defaults = dict(lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0)
+		super(AdamW, self).__init__(params, defaults)
+	
+
 if __name__ == "__main__":
-	test()
+	#test()
+
+	in_channels = 3
+	model = UNet(in_channels=in_channels, out_channels=1)
+	epochs = 1
+	criterion = diceCoefficientLoss()
+	optimizer = optim.SGD(model.parameters(), lr=0.0001, momentum=0.9)
+	schedular = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
+
+	best_model = train(model, epochs, criterion, optimizer, schedular)
