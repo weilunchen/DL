@@ -322,7 +322,6 @@ def train(model, train_loader, test_loader, epochs, criterion, optimizer, schedu
 
 		print("Epoch: " + str(epoch))
 
-		breakpoint()
 		count = 0
 		for data, target in train_loader:
 			model.train(True)
@@ -399,7 +398,7 @@ class MnistDataset(Dataset):
 		self.batch_size = batch_size
 	
 	def __len__(self):
-		len(self.images)
+		return len(self.images)
 
 	def __getitem__(self, index):
 		original_path = os.path.join(self.original_dir, f'{str(index)}.bmp')
