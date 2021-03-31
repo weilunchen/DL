@@ -37,12 +37,12 @@ for train in trains:
 		if train:
 			Path("data/MNIST/segmentation/train/original/").mkdir(parents=True, exist_ok=True)
 			Path("data/MNIST/segmentation/train/processed/").mkdir(parents=True, exist_ok=True)
-			image.save(f'data/MNIST/segmentation/train/original/{index}.bmp')
+			orig_image.save(f'data/MNIST/segmentation/train/original/{index}.bmp')
 			image.save(f'data/MNIST/segmentation/train/processed/{index}.bmp')
 		else:
 			Path("data/MNIST/segmentation/test/original/").mkdir(parents=True, exist_ok=True)
 			Path("data/MNIST/segmentation/test/processed/").mkdir(parents=True, exist_ok=True)
-			image.save(f'data/MNIST/segmentation/test/original/{index}.bmp')
+			orig_image.save(f'data/MNIST/segmentation/test/original/{index}.bmp')
 			image.save(f'data/MNIST/segmentation/test/processed/{index}.bmp')
 
 		index += 1
