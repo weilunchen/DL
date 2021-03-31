@@ -405,8 +405,10 @@ class MnistDataset(Dataset):
 		processed_path = os.path.join(self.original_dir, f'{str(index)}.bmp')
 
 		original = np.array(Image.open(original_path).convert("L"))
+		original = np.expand_dims(original, axis=0)
 		processed = np.array(Image.open(processed_path).convert("L"))
 		processed[processed == 255.0] = 1.0
+		processed = np.expand_dims(processed, axis=0)
 
 		return original, processed
 
@@ -425,8 +427,11 @@ if __name__ == "__main__":
 
 	device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-	in_channels = 3
+	in_channels = 1
 	model = UNet(in_channels=in_channels, out_channels=1).to(device)
+	if torch.cuda.is_available():
+		model.cuda()
+	
 	epochs = 1
 	criterion = diceCoefficientLoss()
 	optimizer = optim.SGD(model.parameters(), lr=0.0001, momentum=0.9)
