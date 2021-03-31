@@ -5,6 +5,10 @@ import torch.optim as optim
 from torch.optim import lr_scheduler
 from torch.autograd import Variable
 import numpy as np
+from torch.utils.data import Dataset
+import os
+from PIL import Image
+from torch.utils.data import DataLoader
 
 class ResNetStart(nn.Module):
 	def __init__(self, in_channels, out_channels, stride=2):
@@ -165,13 +169,13 @@ class ResNet34(nn.Module):
 				downsampling_needed = block_index > 0 and unit_index == 0
 				
 				if downsampling_needed:
-					in_channels = x.shape[2]
+					in_channels = x.shape[1]
 					out_channels = in_channels * 2
-					identity = nn.Conv2d(in_channels, out_channels, 1, stride = 2)
+					identity = nn.Conv2d(in_channels, out_channels, 1, stride = 2)(x)
 				else:
 					identity = x
 
-				x = res_block(x)
+				x = res_unit(x)
 				x += identity
 				x = nn.ReLU(x, inplace=True)
 
@@ -308,10 +312,9 @@ def test():
 	print(preds.shape)
 	print(x.shape)
 
-def train(model, data, epochs, criterion, optimizer, schedular):
+def train(model, train_loader, test_loader, epochs, criterion, optimizer, schedular):
 	best_model = model.state_dict()
 	max_acc = 0.0
-	train_loader, test_loader = data
 
 	for epoch in range(epochs):
 		epoch_loss = 0.0
@@ -319,6 +322,7 @@ def train(model, data, epochs, criterion, optimizer, schedular):
 
 		print("Epoch: " + str(epoch))
 
+		breakpoint()
 		count = 0
 		for data, target in train_loader:
 			model.train(True)
@@ -387,20 +391,53 @@ class diceCoefficientLoss(nn.Module):
 		targ_sum = torch.sum(targ_flat * targ_flat)
 		return 1 - ((2. * intersection) / (pred_sum + targ_sum))
 
-class AdamW(optim.optimizer):
-	def __init__(self, params):
-		defaults = dict(lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0)
-		super(AdamW, self).__init__(params, defaults)
+class MnistDataset(Dataset):
+	def __init__(self, original_dir, processed_dir, batch_size=256):
+		self.original_dir = original_dir
+		self.processed_dir = processed_dir
+		self.images = os.listdir(original_dir)
+		self.batch_size = batch_size
+	
+	def __len__(self):
+		len(self.images)
+
+	def __getitem__(self, index):
+		original_path = os.path.join(self.original_dir, f'{str(index)}.bmp')
+		processed_path = os.path.join(self.original_dir, f'{str(index)}.bmp')
+
+		original = np.array(Image.open(original_path).convert("L"))
+		processed = np.array(Image.open(processed_path).convert("L"))
+		processed[processed == 255.0] = 1.0
+
+		return original, processed
+
+	def get_loader(self):
+		return DataLoader(self, batch_size=self.batch_size)
+
+
+# class AdamW(optim.optimizer):
+# 	def __init__(self, params):
+# 		defaults = dict(lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0)
+# 		super(AdamW, self).__init__(params, defaults)
 	
 
 if __name__ == "__main__":
 	#test()
 
+	device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
 	in_channels = 3
-	model = UNet(in_channels=in_channels, out_channels=1)
+	model = UNet(in_channels=in_channels, out_channels=1).to(device)
 	epochs = 1
 	criterion = diceCoefficientLoss()
 	optimizer = optim.SGD(model.parameters(), lr=0.0001, momentum=0.9)
 	schedular = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
+	
+	train_set = MnistDataset('data/MNIST/segmentation/train/original/', 'data/MNIST/segmentation/train/processed/')
+	train_loader = train_set.get_loader()
 
-	best_model = train(model, epochs, criterion, optimizer, schedular)
+	test_set = MnistDataset('data/MNIST/segmentation/test/original/', 'data/MNIST/segmentation/test/processed/')
+	test_loader = test_set.get_loader()
+
+	best_model = train(model, train_loader, test_loader, epochs, criterion, optimizer, schedular)
+
