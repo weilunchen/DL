@@ -406,7 +406,7 @@ try:
 				count += 1
 
 
-			precision = run_false_positive.true_divide(run_true_positive + run_false_positive)
+			precision = run_true_positive.true_divide(run_true_positive + run_false_positive)
 			recall = run_true_positive.true_divide(run_true_positive + run_false_negative)
 			f1_score = (2 * precision * recall).true_divide(precision + recall)
 			epoch_acc = run_true_positive.true_divide(run_total)
