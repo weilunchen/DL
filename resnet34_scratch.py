@@ -20,6 +20,7 @@ install()
 post_mortem = True 
 disable_cuda = True
 torch.autograd.set_detect_anomaly(True)
+
 try:
 	if disable_cuda:
 		os.environ["CUDA_VISIBLE_DEVICES"]=""
@@ -328,19 +329,30 @@ try:
 
 	def train(model, train_loader, test_loader, epochs, criterion, optimizer, schedular):
 		best_model = model.state_dict()
+		best_index = 0
+
 		max_acc = 0.0
+		max_precision = 0.0
+		max_recall = 0.0
+		max_f1_score = 0.0
+		min_loss = 0.0
+
+		losses = []
+		accuracies = []
+		precisions = []
+		recalls = []
+		f1_scores = []
 
 		for epoch in range(epochs):
 			epoch_loss = 0.0
 			epoch_acc = 0.0
 
-			print("Epoch: " + str(epoch))
-
 			count = 0
+
 			for data, target in train_loader:
 				model.train(True)
 
-				print(count)
+				print("Epoch: " + str(epoch) + " Train: " + str(count))
 
 				input = Variable(data.type(torch.FloatTensor))
 				target = Variable(target.type(torch.LongTensor))
@@ -352,7 +364,6 @@ try:
 					target = target.cuda()
 
 				output = model(input)
-				_, preds = torch.max(output.data, 1)
 				loss = criterion(output, target)
 
 				loss.backward()
@@ -361,9 +372,15 @@ try:
 			
 			count = 0
 			run_loss = 0.0
+			run_total = 0
 			run_corrects = 0
+			run_true_positive = 0
+			run_false_positive = 0
+			run_true_negative = 0
+			run_false_negative = 0
+
 			for data, target in test_loader:
-				print("Test: " + str(count))
+				print("Epoch: " + str(epoch) + " Test: " + str(count))
 
 				model.train(False)
 
@@ -375,30 +392,92 @@ try:
 					target = target.cuda()
 				
 				output = model(input)
-				_, preds = torch.max(output.data, 1)
+				preds = torch.clamp(torch.round(output.data.squeeze(1)), min=0, max=1)
 				loss = criterion(output, target)
 
 				run_loss += loss.item()
-				run_corrects += torch.sum(preds == target.data)
+				run_total += np.product(preds.shape)
+				run_corrects += torch.sum(preds == target.data.squeeze(1))
+				run_true_positive += torch.sum((preds == 1) & (target.data.squeeze(1) == 1))
+				run_false_positive += torch.sum((preds == 1) & (target.data.squeeze(1) == 0))
+				run_true_negative += torch.sum((preds == 0) & (target.data.squeeze(1) == 0))
+				run_false_negative += torch.sum((preds == 0) & (target.data.squeeze(1) == 1))
+
 				count += 1
-			
-			epoch_loss = run_loss / len(test_loader)
-			epoch_acc = run_corrects.true_divide(len(test_loader))
+
+
+			precision = run_false_positive.true_divide(run_true_positive + run_false_positive)
+			recall = run_true_positive.true_divide(run_true_positive + run_false_negative)
+			f1_score = (2 * precision * recall).true_divide(precision + recall)
+			epoch_acc = run_true_positive.true_divide(run_total)
+
+			print("==============================================")
+			print(f'Epoch {epoch} stats:')
+			print(f'Dice loss: {run_loss}')
+			print(f'Precision: {precision}')
+			print(f'Recall: {recall}')
+			print(f'F1 score: {f1_score}')
+			print(f'Accuracy: {epoch_acc}')
+			print('')
+			print(f'TP: {run_true_positive}')
+			print(f'FP: {run_false_positive}')
+			print(f'TN: {run_true_negative}')
+			print(f'FN: {run_false_negative}')
+			print("==============================================")
+
+			accuracies.append(epoch_acc)
+			precisions.append(precision)
+			recalls.append(recall)
+			f1_scores.append(f1_score)
+			losses.append(run_loss)
+
+
+			if run_loss < min_loss:
+				print("Best loss yet: " + str(run_loss))
+				max_precision = precision
+
+			if precision > max_precision:
+				print("Best precision yet: " + str(precision))
+				max_precision = precision
+				best_index = epoch
+				best_model = model.state_dict()
+
+			if recall > max_recall:
+				print("Best recall yet: " + str(recall))
+				max_recall = recall
+
+			if f1_score > max_f1_score:
+				print("Best F1 score yet: " + str(f1_score))
+				max_f1_score = f1_score
 
 			if epoch_acc > max_acc:
-				print("Best accuracy: " + str(epoch_acc))
+				print("Best accuracy yet: " + str(epoch_acc))
 				max_acc = epoch_acc
-				best_model = model.state_dict()
 		
+
 		print("Eval Done")
+		print("==============================================")
+		print(f"Best model precision: {precisions[best_index]}")
+		print(f"Best model recall: {recalls[best_index]}")
+		print(f"Best model F1 score: {f1_scores[best_index]}")
+		print(f"Best model accuracy: {accuracies[best_index]}")
+		print(f"Best model loss: {losses[best_index]}")
+
+		print(f"All precisions: {precisions}")
+		print(f"All recalls: {recalls}")
+		print(f"All F1 scores: {f1_scores}")
+		print(f"All accuracies: {accuracies}")
+		print(f"All losses: {losses}")
+		print("==============================================")
+
 		return best_model
 
 	class diceCoefficientLoss(nn.Module):
 		def __init__(self):
 			super(diceCoefficientLoss, self).__init__()
 		def forward(self, pred, target):
-			pred_flat = pred.contiguous().view(-1)
-			targ_flat = target.contiguous().view(-1)
+			pred_flat = torch.clamp(torch.round(pred.contiguous().view(-1)), min=0, max=1)
+			targ_flat = torch.clamp(target.contiguous().view(-1), min=0, max=1)
 			intersection = (pred_flat * targ_flat).sum()
 			pred_sum = torch.sum(pred_flat * pred_flat)
 			targ_sum = torch.sum(targ_flat * targ_flat)
@@ -408,7 +487,7 @@ try:
 		def __init__(self, original_dir, processed_dir, image_size=32, batch_size=256):
 			self.original_dir = original_dir
 			self.processed_dir = processed_dir
-			self.images = os.listdir(original_dir)
+			self.images = os.listdir(str(os.path.join(original_dir, str(image_size))))
 			self.batch_size = batch_size
 			# Image sizes for MNIST: 32, 128, 256, 320
 			self.image_size = image_size
@@ -448,9 +527,9 @@ try:
 		if torch.cuda.is_available():
 			model = model.cuda()
 
-		epochs = 1
+		epochs = 2
 		criterion = diceCoefficientLoss().to(device)
-		optimizer = optim.SGD(model.parameters(), lr=0.0001, momentum=0.9)
+		optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
 		schedular = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
 		
 		train_set = MnistDataset('data/MNIST/segmentation/train/original/', 'data/MNIST/segmentation/train/processed/')
