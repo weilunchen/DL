@@ -18,12 +18,14 @@ from rich.traceback import install
 
 install()
 post_mortem = True 
-disable_cuda = True
+disable_cuda = False
 torch.autograd.set_detect_anomaly(True)
 
 try:
 	if disable_cuda:
 		os.environ["CUDA_VISIBLE_DEVICES"]=""
+
+	device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 	class ResNetStart(nn.Module):
 		def __init__(self, in_channels, out_channels, stride=2):
@@ -71,8 +73,8 @@ try:
 			self.reduction = reduction
 
 		def forward(self, x):
-			x = nn.ReLU(inplace=True)(x)
-			x = nn.BatchNorm2d(self.in_channels)(x)
+			x = nn.ReLU(inplace=True).to(device)(x)
+			x = nn.BatchNorm2d(self.in_channels).to(device)(x)
 
 			#Concurrent Spatial, Channel Squeeze and Excitation layer (scSE)
 			x_before_squeeze = x
@@ -92,20 +94,20 @@ try:
 			linear_shape = [n, linear_in_channels]
 
 			# Spatial Squeeze and Channel Excitation (cSE)
-			x = View(linear_shape)(x)
-			x = nn.Linear(linear_in_channels, linear_in_channels // self.reduction)(x)
-			x = nn.ReLU(inplace=True)(x)
-			x = nn.Linear(linear_in_channels // self.reduction, linear_in_channels)(x)
-			x = nn.Sigmoid()(x)
-			x = View(tensor_shape)(x)
+			x = View(linear_shape).to(device)(x)
+			x = nn.Linear(linear_in_channels, linear_in_channels // self.reduction).to(device)(x)
+			x = nn.ReLU(inplace=True).to(device)(x)
+			x = nn.Linear(linear_in_channels // self.reduction, linear_in_channels).to(device)(x)
+			x = nn.Sigmoid().to(device)(x)
+			x = View(tensor_shape).to(device)(x)
 
 			x_cSE = x_before_squeeze * x
 
 			# Channel Squeeze and Spatial Excitation (sSE)
 			x = x_before_squeeze
 
-			x = nn.Conv1d(self.in_channels, 1, kernel_size=(1, 1))(x)
-			x = nn.Sigmoid()(x)
+			x = nn.Conv1d(self.in_channels, 1, kernel_size=(1, 1)).to(device)(x)
+			x = nn.Sigmoid().to(device)(x)
 
 			x_sSE = x_before_squeeze * x
 
@@ -114,7 +116,7 @@ try:
 			x = x_sSE + x_cSE
 
 			# After squeeze, transpose Conv with kernel of 2x2 and stride of 2
-			x = nn.ConvTranspose2d(self.in_channels, self.out_channels, kernel_size=(2, 2), stride=2, bias=False)(x)
+			x = nn.ConvTranspose2d(self.in_channels, self.out_channels, kernel_size=(2, 2), stride=2, bias=False).to(device)(x)
 
 			return x
 		
@@ -268,6 +270,7 @@ try:
 			self.final_conv = UpSampleBlock(256, 1)
 
 
+
 		def forward(self, x):
 			# UNet skip connections
 			skip_connections = []
@@ -278,11 +281,11 @@ try:
 				skip_in_channels = x.shape[1]
 				skip_out_channels = 128
 
-				skip_connection = nn.Conv2d(skip_in_channels, skip_out_channels, 1, stride = 1)(x)
+				skip_connection = nn.Conv2d(skip_in_channels, skip_out_channels, 1, stride = 1).to(device)(x)
 				skip_connections.append(skip_connection)
 
 				if block_index == 0:
-					x = nn.MaxPool2d(kernel_size=2, stride=2)(x)
+					x = nn.MaxPool2d(kernel_size=2, stride=2).to(device)(x)
 
 				for unit_index, res_unit in enumerate(res_block):
 					downsampling_needed = block_index > 0 and unit_index == 0
@@ -290,16 +293,16 @@ try:
 					if downsampling_needed:
 						in_channels = x.shape[1]
 						out_channels = in_channels * 2
-						identity = nn.Conv2d(in_channels, out_channels, 1, stride = 2)(x)
+						identity = nn.Conv2d(in_channels, out_channels, 1, stride = 2).to(device)(x)
 					else:
 						identity = x
 
 					x = res_unit(x)
 					x += identity
-					x = nn.ReLU(inplace=True)(x)
+					x = nn.ReLU(inplace=True).to(device)(x)
 
 			# Mid edge at the bottom of UNet
-			x = nn.Conv2d(512, 512, 1, stride = 1)(x)
+			x = nn.Conv2d(512, 512, 1, stride = 1).to(device)(x)
 
 			skip_connections = skip_connections[::-1]
 
@@ -354,17 +357,20 @@ try:
 
 				print("Epoch: " + str(epoch) + " Train: " + str(count))
 
-				input = Variable(data.type(torch.FloatTensor))
-				target = Variable(target.type(torch.LongTensor))
+				input = Variable(data.type(torch.FloatTensor)).to(device)
+				target = Variable(target.type(torch.FloatTensor)).to(device)
+
+				output = model(input)
+
+				output = torch.clamp(torch.round(output.contiguous().view(-1)), min=0, max=1)
+				target = torch.clamp(target.contiguous().view(-1), min=0, max=1)
+
+				loss = criterion(output, target)
 
 				optimizer.zero_grad()
 
-				if torch.cuda.is_available():
-					input = input.cuda()
-					target = target.cuda()
-
-				output = model(input)
-				loss = criterion(output, target)
+				print(f'Current learning rate: {optimizer.param_groups[0]["lr"]}')
+				print(f'Loss for batch {str(count)}: {str(loss.item())}')
 
 				loss.backward()
 				optimizer.step()
@@ -382,16 +388,13 @@ try:
 			for data, target in test_loader:
 				print("Epoch: " + str(epoch) + " Test: " + str(count))
 
-				model.train(False)
+				model.eval()
 
-				input = Variable(data.type(torch.FloatTensor))
-				target = Variable(target.type(torch.LongTensor))
+				input = Variable(data.type(torch.FloatTensor)).to(device)
+				target = Variable(target.type(torch.FloatTensor)).to(device)
 
-				if torch.cuda.is_available():
-					input = input.cuda()
-					target = target.cuda()
-				
 				output = model(input)
+
 				preds = torch.clamp(torch.round(output.data.squeeze(1)), min=0, max=1)
 				loss = criterion(output, target)
 
@@ -520,22 +523,22 @@ try:
 	if __name__ == "__main__":
 		#test()
 
-		device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
 		in_channels = 1
 		model = UNet(in_channels=in_channels, out_channels=1).to(device)
 		if torch.cuda.is_available():
 			model = model.cuda()
 
-		epochs = 2
-		criterion = diceCoefficientLoss().to(device)
-		optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+		epochs = 10
+		batch_size = 2
+		# criterion = diceCoefficientLoss().to(device)
+		criterion = nn.BCEWithLogitsLoss()
+		optimizer = optim.SGD(model.parameters(), lr=0.5, momentum=0.9)
 		schedular = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
 		
-		train_set = MnistDataset('data/MNIST/segmentation/train/original/', 'data/MNIST/segmentation/train/processed/')
+		train_set = MnistDataset('data/MNIST/segmentation/train/original/', 'data/MNIST/segmentation/train/processed/', batch_size=batch_size)
 		train_loader = train_set.get_loader()
 
-		test_set = MnistDataset('data/MNIST/segmentation/test/original/', 'data/MNIST/segmentation/test/processed/')
+		test_set = MnistDataset('data/MNIST/segmentation/test/original/', 'data/MNIST/segmentation/test/processed/',  batch_size=batch_size)
 		test_loader = test_set.get_loader()
 
 		#print(summary(self, input_size=(256, 1, 28, 28), device='cpu', verbose=2))
