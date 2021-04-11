@@ -54,16 +54,6 @@ try:
 		def forward(self, x):
 			return self.conv(x)
 
-	class View(nn.Module):
-		def __init__(self, shape):
-			super(View, self).__init__()
-
-			self.shape = shape
-
-		def forward(self, x):
-			return x.view(self.shape)
-
-
 	class UpSampleBlock(nn.Module):
 		def __init__(self, in_channels, out_channels, reduction=2):
 			super(UpSampleBlock, self).__init__()
@@ -72,9 +62,28 @@ try:
 			self.out_channels = out_channels
 			self.reduction = reduction
 
+			self.relu_batch = nn.Sequential(
+				nn.ReLU(inplace=True),
+				nn.BatchNorm2d(self.in_channels)
+			)
+			self.global_avg_pool = nn.AdaptiveAvgPool2d((1,1))
+
+			self.sSE = nn.Sequential(
+				nn.Linear(in_channels, in_channels // self.reduction),
+				nn.ReLU(inplace=True).to(device),
+				nn.Linear(in_channels // self.reduction, in_channels),
+				nn.Sigmoid()
+			)
+
+			self.cSE = nn.Sequential(
+				nn.Conv2d(self.in_channels, 1, kernel_size=(1, 1)),
+				nn.Sigmoid()
+			)
+
+			self.final_conv = nn.ConvTranspose2d(self.in_channels, self.out_channels, kernel_size=(2, 2), stride=2, bias=False)
+
 		def forward(self, x):
-			x = nn.ReLU(inplace=True).to(device)(x)
-			x = nn.BatchNorm2d(self.in_channels).to(device)(x)
+			x = self.relu_batch(x)
 
 			#Concurrent Spatial, Channel Squeeze and Excitation layer (scSE)
 			x_before_squeeze = x
@@ -83,7 +92,7 @@ try:
 			original_width = x.shape[3]
 			
 			# Global average pool
-			x = nn.AvgPool2d(kernel_size=(original_height, original_height))(x)
+			x = self.global_avg_pool(x)
 
 			tensor_shape = x.shape
 			n = tensor_shape[0]
@@ -93,21 +102,16 @@ try:
 			linear_in_channels = np.product(channel_size)
 			linear_shape = [n, linear_in_channels]
 
-			# Spatial Squeeze and Channel Excitation (cSE)
-			x = View(linear_shape).to(device)(x)
-			x = nn.Linear(linear_in_channels, linear_in_channels // self.reduction).to(device)(x)
-			x = nn.ReLU(inplace=True).to(device)(x)
-			x = nn.Linear(linear_in_channels // self.reduction, linear_in_channels).to(device)(x)
-			x = nn.Sigmoid().to(device)(x)
-			x = View(tensor_shape).to(device)(x)
+			# Spacial Squeeze and Channel Excitation (cSE)
+			x = x.view(linear_shape)
+			x = self.sSE(x)
+			x = x.view(tensor_shape)
 
 			x_cSE = x_before_squeeze * x
 
 			# Channel Squeeze and Spatial Excitation (sSE)
 			x = x_before_squeeze
-
-			x = nn.Conv1d(self.in_channels, 1, kernel_size=(1, 1)).to(device)(x)
-			x = nn.Sigmoid().to(device)(x)
+			x = self.cSE(x)
 
 			x_sSE = x_before_squeeze * x
 
@@ -116,7 +120,7 @@ try:
 			x = x_sSE + x_cSE
 
 			# After squeeze, transpose Conv with kernel of 2x2 and stride of 2
-			x = nn.ConvTranspose2d(self.in_channels, self.out_channels, kernel_size=(2, 2), stride=2, bias=False).to(device)(x)
+			x = self.final_conv(x)
 
 			return x
 		
@@ -205,12 +209,20 @@ try:
 
 			self.res_blocks = nn.ModuleList()
 			self.ups = nn.ModuleList()
+			self.skip_convs = nn.ModuleList()
+			self.downsample_convs = nn.ModuleList()
 
 			channel_size = 64
 			double_channel_size = channel_size * 2
 
 			# Zeroth/Start block (64)
 			self.start_block = ResNetStart(in_channels, channel_size)
+			self.start_max_pool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+			self.relu = nn.ReLU(inplace=True)
+
+			skip_conv = nn.Conv2d(channel_size, 128, 1, stride = 1)
+			self.skip_convs.append(skip_conv)
 
 			# First block list (64)
 			res_block = nn.ModuleList()
@@ -218,6 +230,12 @@ try:
 			res_block.append(ResNetUnit(channel_size, channel_size))
 			res_block.append(ResNetUnit(channel_size, channel_size))
 			self.res_blocks.append(res_block)
+
+			skip_conv = nn.Conv2d(channel_size, 128, 1, stride = 1)
+			self.skip_convs.append(skip_conv)
+
+			downsample_conv = nn.Conv2d(channel_size, double_channel_size, 1, stride = 2)
+			self.downsample_convs.append(downsample_conv)
 
 			# Second block list (128)
 			res_block = nn.ModuleList()
@@ -229,6 +247,12 @@ try:
 
 			channel_size = double_channel_size
 			double_channel_size = channel_size * 2
+
+			skip_conv = nn.Conv2d(channel_size, 128, 1, stride = 1)
+			self.skip_convs.append(skip_conv)
+
+			downsample_conv = nn.Conv2d(channel_size, double_channel_size, 1, stride = 2)
+			self.downsample_convs.append(downsample_conv)
 
 			# Third block list (256)
 			res_block = nn.ModuleList()
@@ -243,12 +267,23 @@ try:
 			channel_size = double_channel_size
 			double_channel_size = channel_size * 2
 
+			skip_conv = nn.Conv2d(channel_size, 128, 1, stride = 1)
+			self.skip_convs.append(skip_conv)
+
+			downsample_conv = nn.Conv2d(channel_size, double_channel_size, 1, stride = 2)
+			self.downsample_convs.append(downsample_conv)
+
 			# Fourth block list (512)
 			res_block = nn.ModuleList()
 			res_block.append(ResNetUnit(channel_size, double_channel_size, stride=2))
 			res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 			res_block.append(ResNetUnit(double_channel_size, double_channel_size))
 			self.res_blocks.append(res_block)
+
+
+			# Mid edge at the bottom of UNet
+			self.mid_conv = nn.Conv2d(512, 512, 1, stride = 1)
+
 
 			# Fourth level (This is bottom now)
 			self.ups.append(UpSampleBlock(double_channel_size, 128))
@@ -278,31 +313,26 @@ try:
 			x = self.start_block(x)
 
 			for block_index, res_block in enumerate(self.res_blocks):
-				skip_in_channels = x.shape[1]
-				skip_out_channels = 128
-
-				skip_connection = nn.Conv2d(skip_in_channels, skip_out_channels, 1, stride = 1).to(device)(x)
+				skip_connection = self.skip_convs[block_index](x)
 				skip_connections.append(skip_connection)
 
 				if block_index == 0:
-					x = nn.MaxPool2d(kernel_size=2, stride=2).to(device)(x)
+					x = self.start_max_pool(x)
 
 				for unit_index, res_unit in enumerate(res_block):
 					downsampling_needed = block_index > 0 and unit_index == 0
 
 					if downsampling_needed:
-						in_channels = x.shape[1]
-						out_channels = in_channels * 2
-						identity = nn.Conv2d(in_channels, out_channels, 1, stride = 2).to(device)(x)
+						identity = self.downsample_convs[block_index - 1](x) # zeroth block has max pool instead of conv
 					else:
 						identity = x
 
 					x = res_unit(x)
 					x += identity
-					x = nn.ReLU(inplace=True).to(device)(x)
+					x = self.relu(x)
 
 			# Mid edge at the bottom of UNet
-			x = nn.Conv2d(512, 512, 1, stride = 1).to(device)(x)
+			x = self.mid_conv(x)
 
 			skip_connections = skip_connections[::-1]
 
