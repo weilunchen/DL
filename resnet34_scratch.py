@@ -284,27 +284,22 @@ try:
 
 
 			# Mid edge at the bottom of UNet
-			self.mid_conv = nn.Conv2d(512, 512, 1, stride = 1)
-
-
-			# Fourth level (This is bottom now)
-			self.ups.append(UpSampleBlock(double_channel_size, 128))
-			self.ups.append(nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1))
+			self.mid_conv = nn.Sequential(
+				nn.Conv2d(512, 512, 1, stride = 1),
+				nn.ConvTranspose2d(512, 128, kernel_size=(2, 2), stride=2, bias=False)
+			)
 
 			# Third level
 			self.ups.append(UpSampleBlock(256, 128))
-			self.ups.append(nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1))
 
 			# Second level
 			self.ups.append(UpSampleBlock(256, 128))
-			self.ups.append(nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1))
 
 			# First level
 			self.ups.append(UpSampleBlock(256, 128))
-			self.ups.append(nn.Conv2d(256, 256, kernel_size=3, stride=1, padding=1))
 
 			# Zeroth level. Final convolution to obtain output
-			self.final_conv = UpSampleBlock(256, 1)
+			self.ups.append(UpSampleBlock(256, 1))
 
 
 
@@ -338,15 +333,14 @@ try:
 
 			skip_connections = skip_connections[::-1]
 
-			for i in range(0, len(self.ups), 2):
-				skip_connection = skip_connections[i//2]
+			for i in range(len(self.ups)):
+				skip_connection = skip_connections[i]
 				x_skip = skip_connection
-				x = self.ups[i](x)
-				
-				concat_skip_connection = torch.cat((x_skip, x), dim=1)
-				x = self.ups[i+1](concat_skip_connection) 
 
-			x = self.final_conv(x)
+				concat_skip_connection = torch.cat((x_skip, x), dim=1)
+				x = self.ups[i](concat_skip_connection)
+		
+			# x = self.final_conv(x)
 
 			return x
 		
