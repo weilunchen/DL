@@ -17,10 +17,13 @@ from rich.console import Console
 from rich.traceback import install
 from torchviz import make_dot
 import matplotlib.pyplot as plt
+import wandb
+
 
 install()
 post_mortem = True 
 disable_cuda = False
+enable_wandb = False
 torch.autograd.set_detect_anomaly(True)
 
 try:
@@ -366,6 +369,9 @@ try:
 		max_f1_score = 0.0
 		min_loss = 0.0
 
+		run_total = 0.0
+		run_corrects = 0.0
+
 		losses = []
 		accuracies = []
 		precisions = []
@@ -388,29 +394,38 @@ try:
 
 				output = model(input)
 
-				output = torch.clamp(torch.round(output.contiguous().squeeze(1)), min=0, max=1)
-				target = torch.clamp(target.contiguous(), min=0, max=1)
+				#output = torch.clamp(torch.round(output.contiguous().squeeze(1)), min=0, max=1)
+				#target = torch.clamp(target.contiguous(), min=0, max=1)
 
+				before_params = list(model.parameters())[0].clone()
 				loss = criterion(output, target)
-
 
 				loss.backward()
 
+				optimizer.step()
+				schedular.step()
+				
+				after_params = list(model.parameters())[0].clone()
+
 				if count % 10 == 0:
-					print("Epoch: " + str(epoch) + " Train: " + str(count))
+					print("Epoch: " + str(epoch) + " Train: " + str(count) + " of " + str(len(train_loader)))
 					print(f'Current learning rate: {optimizer.param_groups[0]["lr"]}')
 					print(f'Loss for batch {str(count)}: {str(loss.item())}')
+					print(f'Model parameters changed?: {not torch.equal(before_params, after_params)}')
 					# for param in model.parameters():
 					# 	print(float(param.grad.data.sum()))
 
 				if count % 50 == 0:
-					plt.imshow(TF.to_pil_image(output.to('cpu')))
+					plt.imshow(TF.to_pil_image(output.squeeze(1)[0].to('cpu')))
 					plt.show()
 				# make_dot(output.mean(), params=dict(model.named_parameters())).render("rnn_torchviz", format="png")
-
-				optimizer.step()
-				schedular.step()
 				count += 1
+
+				run_corrects += torch.sum(output == target)
+				run_total += np.product(output.shape)
+
+				epoch_acc = run_corrects.true_divide(run_total)
+				wandb.log({'Train Loss': loss.item(), 'Train Accuracy': epoch_acc})
 			
 			count = 0
 			run_loss = 0.0
@@ -424,7 +439,7 @@ try:
 			model.eval()
 
 			for data, target in test_loader:
-				print("Epoch: " + str(epoch) + " Test: " + str(count))
+				print("Epoch: " + str(epoch) + " Train: " + str(count) + " of " + str(len(test_loader)))
 
 				input = Variable(data.type(torch.FloatTensor)).to(device)
 				target = Variable(target.type(torch.FloatTensor)).to(device)
@@ -515,12 +530,15 @@ try:
 		def __init__(self):
 			super(diceCoefficientLoss, self).__init__()
 		def forward(self, pred, target):
-			pred_flat = torch.clamp(torch.round(pred.contiguous().view(-1)), min=0, max=1)
-			targ_flat = torch.clamp(target.contiguous().view(-1), min=0, max=1)
+			smooth = 1
+			pred_flat = pred
+			targ_flat = target
+			# pred_flat = torch.clamp(torch.round(pred.contiguous().view(-1)), min=0, max=1)
+			# targ_flat = torch.clamp(target.contiguous().view(-1), min=0, max=1)
 			intersection = (pred_flat * targ_flat).sum()
 			pred_sum = torch.sum(pred_flat * pred_flat)
 			targ_sum = torch.sum(targ_flat * targ_flat)
-			return 1 - ((2. * intersection) / (pred_sum + targ_sum))
+			return 1 - ((2. * intersection + smooth) / (pred_sum + targ_sum + smooth))
 
 	class MnistDataset(Dataset):
 		def __init__(self, original_dir, processed_dir, image_size=32, batch_size=256):
@@ -561,16 +579,23 @@ try:
 
 		in_channels = 1
 		model = UNet(in_channels=in_channels, out_channels=1).to(device)
+
+		wandb_mode = 'enabled' if enable_wandb else 'disabled'
+		wandb.init(project='dl_unet', mode=wandb_mode)
+		wandb.watch(model, log='all')
+
 		if torch.cuda.is_available():
 			model = model.cuda()
 
 		epochs = 10
-		batch_size = 2
+		batch_size = 256
 		criterion = diceCoefficientLoss().to(device)
 		# criterion = nn.BCEWithLogitsLoss()
-		# optimizer = optim.SGD(model.parameters(), lr=0.1, momentum=0.9)
+		# criterion = nn.MSELoss()
+		optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
 		# optimizer = optim.Adadelta(model.parameters(), lr=1.0, rho=0.9, eps=1e-06, weight_decay=0)
-		optimizer = optim.RMSprop(model.parameters(), lr=0.001, weight_decay=1e-8, momentum=0.9)
+		# optimizer = optim.RMSprop(model.parameters(), lr=0.001, weight_decay=1e-8, momentum=0.9)
+		
 		# schedular = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
 		schedular = lr_scheduler.MultiplicativeLR(optimizer, lr_lambda = lambda epoch: 0.999)
 		
